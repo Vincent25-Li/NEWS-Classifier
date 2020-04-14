@@ -59,9 +59,11 @@ class ScrapeLiberty():
         self.data = data
         self.titles = self.data[:, 2] if np.any(self.data) else []
     
-    def scrape(self):
+    def scrape(self, s_category=None):
         data = []
         for category in self.categories.keys():
+            if s_category is not None and category != s_category: continue
+
             index = 1
             
             while True:
@@ -165,9 +167,10 @@ class ScrapeChina(ScrapeLiberty):
                            'society': 'society'}
         self.news = 'china'
     
-    def scrape(self):
+    def scrape(self, s_category=None):
         data = []
         for category in self.categories.keys():
+            if s_category is not None and category != s_category: continue
             for index in range(1, 11):  
                 url = f'{self.url_base}/{category}/total?page={index}&chdtv'
                 try:
@@ -241,9 +244,10 @@ class ScrapeUDN(ScrapeLiberty):
                            'entertainment': 'stars'}
         self.news = 'udn'
     
-    def scrape(self):
+    def scrape(self, s_category=None):
         data = []
         for category in self.categories.keys():
+            if s_category is not None and category != s_category: continue
             index = 0
             counts = 0
             counts_e = 0
@@ -358,9 +362,11 @@ def main(args):
                     'udn': ScrapeUDN()}
 
     if isinstance(args.targets, str):
-        crawlers[args.targets].scrape()
+        print(f'Scraping {args.targets}...')
+        crawlers[args.targets].scrape(args.s_category)
     else:
         for target in args.targets:
+            print(f'Scraping {target}...')
             crawlers[target].scrape()
     
     np.savez(args.crawler_file,
