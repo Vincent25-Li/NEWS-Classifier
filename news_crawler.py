@@ -57,6 +57,7 @@ class ScrapeLiberty():
                            'sports': 'sport'}
         self.news = 'liberty'
         self.data = data
+        self.id = len(data) if data else 0
         self.titles = self.data[:, 2] if np.any(self.data) else []
     
     def scrape(self, s_category=None):
@@ -81,6 +82,7 @@ class ScrapeLiberty():
                     for news in news_list:
                         try:
                             datum = self.process_page(news, category)
+                            self.id += 1
                         except: datum = None
                         if datum:
                             data.append(datum)
@@ -107,7 +109,7 @@ class ScrapeLiberty():
         content = self.get_content(article, category)
         image_path = self.get_image(news['photo_S'])
 
-        return [date, title, content, image_path, self.categories[category], url]
+        return [date, title, content, image_path, self.categories[category], url, self.id]
     
     def get_article(self, soup, category):
         if category in ['entertainment', 'sports']:

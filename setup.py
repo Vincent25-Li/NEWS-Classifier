@@ -18,7 +18,7 @@ def build_features(args, data, y, tokenizer, out_file, data_type):
     print(f'Building features in {data_type} set...')
 
     # Load data
-    titles, contents, img_paths = data[:, 1], data[:, 2], data[:, 3]
+    titles, contents, img_paths, ids = data[:, 1], data[:, 2], data[:, 3], data[:, 6]
 
     title_limit = args.title_max_len
     content_limit = args.content_max_len
@@ -51,9 +51,9 @@ def build_features(args, data, y, tokenizer, out_file, data_type):
     np.savez(out_file,
              input_idxs=np.array(input_idxs),
              atten_masks=np.array(atten_masks),
-             img_paths=np.array(img_paths),
+             img_paths=img_paths,
+             ids=ids.astype(int),
              y=np.array(y))
-
 def pre_process(args):
     # Load data
     data = np.load(args.raw_data_file, allow_pickle=True)[args.times]

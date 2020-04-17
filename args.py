@@ -31,14 +31,6 @@ def get_setup_args():
 
     add_common_args(parser)
 
-    parser.add_argument('--raw_data_file',
-                        type=str,
-                        default='./data/train_raw.npz',
-                        help='File to precessed')
-    parser.add_argument('--times',
-                        type=str,
-                        default='liberty',
-                        help='Determine publisher to process')
     parser.add_argument('--title_max_len',
                         type=int,
                         default=39,
@@ -67,8 +59,70 @@ def get_setup_args():
     
     return args
 
+def get_train_args():
+    """Get arguments needed in train.py"""
+    parser = argparse.ArgumentParser('Train a model on NEWS')
+
+    add_common_args(parser)
+    add_train_test_args(parser)
+
+    parser.add_argument('--eval_steps',
+                        type=int,
+                        default=2000,
+                        help='Number of steps between successive evaluations.')
+    parser.add_argument('--lr',
+                        type=float,
+                        default=2e-5,
+                        help='Learning rate.')
+    parser.add_argument('--l2_wd',
+                        type=float,
+                        default=0,
+                        help='L2 weight decay.')
+    parser.add_argument('--num_epochs',
+                        type=int,
+                        default=5,
+                        help='Number of epochs for which to train. Negative means forever.')
+    parser.add_argument('--num_labels',
+                        type=int,
+                        default=8,
+                        help='Number of labels for classification.')
+    parser.add_argument('--use_img',
+                        type=lambda s: s.lower().startwith('t'),
+                        default=True,
+                        help='Whether to use images for prediction')
+    parser.add_argument('--metric_name',
+                        type=str,
+                        default='F1',
+                        choices=('NLL', 'F1'),
+                        help='Name of dev metric to determine best checkpoint.')
+    parser.add_argument('--max_checkpoints',
+                        type=int,
+                        default=5,
+                        help='Maximum number of checkpoints to keep on disk.')
+
+    args = parser.parse_args()
+
+    if args.metric_name == 'NLL':
+        # Best checkpoint is the one that minimizes negative log-likelihood
+        args.maximize_metric = False
+    elif args.metric_name == 'F1':
+        # Best checkpoint is the one that maximizes F1
+        args.maximize_metric = True
+    else:
+        raise ValueError(f'Unrecognized metric name: "{args.metric_name}"')
+
+    return args
+
 def add_common_args(parser):
-    """Add arguments common to scripts: setup.py, train.py"""
+    """Add arguments common to scripts: setup.py, train.py, test.py"""
+    parser.add_argument('--raw_data_file',
+                        type=str,
+                        default='./data/train_raw.npz',
+                        help='Original data file')
+    parser.add_argument('--times',
+                        type=str,
+                        default='liberty',
+                        help='Determine publisher to process')
     parser.add_argument('--seed',
                         type=int,
                         default=112,
@@ -94,3 +148,16 @@ def add_train_test_args(parser):
                         type=str,
                         default='./save/',
                         help='Base directory for saving information.')
+    parser.add_argument('--load_path',
+                        type=str,
+                        default=None,
+                        help='Path to load as a model checkpoint.')
+    parser.add_argument('--batch_size',
+                        type=int,
+                        default=64,
+                        help='Batch size per GPU. Scales automatically when \
+                              multiple GPUs are available.')
+    parser.add_argument('--num_workers',
+                        type=int,
+                        default=4,
+                        help='Number of sub-processes to use per data loader.')

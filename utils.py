@@ -1,11 +1,17 @@
 """Utility classes and methods"""
 
 import os
+import logging
+import queue
+import shutil
 import numpy as np
 import torch
 import torch.utils.data as data
 
 from skimage import io
+from PIL import Image
+from collections import Counter
+from tqdm import tqdm
 
 class NEWS(data.Dataset):
     """NEWS Dataset.
@@ -27,21 +33,24 @@ class NEWS(data.Dataset):
     def __init__(self, data_path, transform):
         super(NEWS, self).__init__()
 
-        dataset = np.load(data_path)
+        dataset = np.load(data_path, allow_pickle=True)
 
         self.input_idxs = torch.from_numpy(dataset['input_idxs']).long()
         self.atten_masks = torch.from_numpy(dataset['atten_masks']).long()
         self.img_paths = dataset['img_paths']
+        self.ids = torch.from_numpy(dataset['ids']).long()
         self.y = torch.from_numpy(dataset['y']).long()
         self.transform = transform
     
     def __getitem__(self, idx):
-        image = io.read(self.img_paths[idx])
+        image = io.imread(self.img_paths[idx])
+        image = Image.fromarray(image)
         image = self.transform(image)
 
         example = (self.input_idxs[idx],
                    self.atten_masks[idx],
                    image,
+                   self.ids[idx],
                    self.y[idx])
         return example
 
@@ -77,7 +86,7 @@ def collate_fn(examples):
             merged[i] = seq[:length]
         return merged
     
-    def merge_image(arrays, dtype=torch.float64):
+    def merge_image(arrays, dtype=torch.float32):
         channel, height, weight = arrays[0].size()
         merged = torch.zeros(len(arrays), channel, height, weight, dtype=dtype)
         for i, image in enumerate(arrays):
@@ -85,17 +94,58 @@ def collate_fn(examples):
         return merged
     
     # Group by tensor type
-    input_idxs, atten_masks, images, y = zip(*examples)
+    input_idxs, atten_masks, images, ids, y = zip(*examples)
 
     # Merge into batch tensors
     input_idxs, length = merge_input(input_idxs)
     atten_masks = merge_mask(atten_masks, length)
     images = merge_image(images)
+    ids = merge_0d(ids)
     y = merge_0d(y)
 
-    return (input_idxs, atten_masks, images, y)
+    return (input_idxs, atten_masks, images, ids, y)
+
+def get_pred_ans_pair(ids: list, probs: list, y: list):
+    """Pair the prediction and the ground truth label
+
+    Args:
+        ids (list): List of NEWS IDs.
+        probs (list): List of probability prediction.
+        y (list): List of ground truth label.
+    
+    Return:
+        pred_dict (dict): Dictionary index IDs -> (predicted label, true label)
+    """
+    pred_dict = {}
+    for nid, prob, label in zip(ids, probs, y):
+        pred = prob.index(max(prob))
+        pred_dict[nid] = (pred, label)
+        
+    return pred_dict
+
+def compute_f1(pred_dict):
+    pred_counter = Counter()
+    label_counter = Counter()
+    correct_counter = Counter()
+    for value in pred_dict.values():
+        pred = value[0]
+        label = value[1]
+        pred_counter[pred] += 1
+        label_counter[label] += 1
+        correct_counter[label] += (pred == label)
+    
+    f1_counter = Counter()
+    for key in label_counter.keys():
+        precision = 0 if pred_counter[key] == 0 else correct_counter[key] / pred_counter[key]
+        recall = correct_counter[key] / pred_counter[key]
+        f1_counter[key] = (2 * precision * recall) / (precision + recall)
+    f1 = sum(f1_counter.values()) / len(f1_counter)
+
+    return f1
+
 
 # Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
 def get_save_dir(base_dir, name, training, id_max=100):
     """Get a unique save directory by appending the smallest positive integer
     `id < id_max` that is not already taken (i.e., no dir exists with that id).
@@ -120,6 +170,7 @@ def get_save_dir(base_dir, name, training, id_max=100):
                        Delete old save directories or use another name.')
 
 # Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
 def get_logger(log_dir, name):
     """Get a `logging.Logger` instance that prints to the console
     and an auxiliary file.
@@ -140,7 +191,7 @@ def get_logger(log_dir, name):
         def emit(self, record):
             try:
                 msg = self.format(record)
-                tqdm.tqdm.write(msg)
+                tqdm.write(msg)
                 self.flush()
             except (KeyboardInterrupt, SystemExit):
                 raise
@@ -175,6 +226,7 @@ def get_logger(log_dir, name):
     return logger
 
 # Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
 def get_available_devices():
     """Get IDs of all available GPUs.
 
@@ -191,3 +243,159 @@ def get_available_devices():
         device = torch.device('cpu')
 
     return device, gpu_ids
+
+# Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
+def load_model(model, checkpoint_path, gpu_ids, return_step=True):
+    """Load model parameters from disk.
+
+    Args:
+        model (torch.nn.DataParallel): Load parameters into this model.
+        checkpoint_path (str): Path to checkpoint to load.
+        gpu_ids (list): GPU IDs for DataParallel.
+        return_step (bool): Also return the step at which checkpoint was saved.
+
+    Returns:
+        model (torch.nn.DataParallel): Model loaded from checkpoint.
+        step (int): Step at which checkpoint was saved. Only if `return_step`.
+    """
+    device = f"cuda:{gpu_ids[0]}" if gpu_ids else 'cpu'
+    ckpt_dict = torch.load(checkpoint_path, map_location=device)
+
+    # Build model, load parameters
+    model.load_state_dict(ckpt_dict['model_state'])
+
+    if return_step:
+        step = ckpt_dict['step']
+        return model, step
+
+    return model
+
+# Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
+class CheckpointSaver:
+    """Class to save and load model checkpoints.
+
+    Save the best checkpoints as measured by a metric value passed into the
+    `save` method. Overwrite checkpoints with better checkpoints once
+    `max_checkpoints` have been saved.
+
+    Args:
+        save_dir (str): Directory to save checkpoints.
+        max_checkpoints (int): Maximum number of checkpoints to keep before
+            overwriting old ones.
+        metric_name (str): Name of metric used to determine best model.
+        maximize_metric (bool): If true, best checkpoint is that which maximizes
+            the metric value passed in via `save`. Otherwise, best checkpoint
+            minimizes the metric.
+        log (logging.Logger): Optional logger for printing information.
+    """
+    def __init__(self, save_dir, max_checkpoints, metric_name,
+                 maximize_metric=False, log=None):
+        super(CheckpointSaver, self).__init__()
+
+        self.save_dir = save_dir
+        self.max_checkpoints = max_checkpoints
+        self.metric_name = metric_name
+        self.maximize_metric = maximize_metric
+        self.best_val = None
+        self.ckpt_paths = queue.PriorityQueue()
+        self.log = log
+        self._print(f"Saver will {'max' if maximize_metric else 'min'}imize {metric_name}...")
+
+    def is_best(self, metric_val):
+        """Check whether `metric_val` is the best seen so far.
+
+        Args:
+            metric_val (float): Metric value to compare to prior checkpoints.
+        """
+        if metric_val is None:
+            # No metric reported
+            return False
+
+        if self.best_val is None:
+            # No checkpoint saved yet
+            return True
+
+        return ((self.maximize_metric and self.best_val < metric_val)
+                or (not self.maximize_metric and self.best_val > metric_val))
+
+    def _print(self, message):
+        """Print a message if logging is enabled."""
+        if self.log is not None:
+            self.log.info(message)
+
+    def save(self, step, model, metric_val, device):
+        """Save model parameters to disk.
+
+        Args:
+            step (int): Total number of examples seen during training so far.
+            model (torch.nn.DataParallel): Model to save.
+            metric_val (float): Determines whether checkpoint is best so far.
+            device (torch.device): Device where model resides.
+        """
+        ckpt_dict = {
+            'model_name': model.__class__.__name__,
+            'model_state': model.cpu().state_dict(),
+            'step': step
+        }
+        model.to(device)
+
+        checkpoint_path = os.path.join(self.save_dir,
+                                       f'step_{step}.pth.tar')
+        torch.save(ckpt_dict, checkpoint_path)
+        self._print(f'Saved checkpoint: {checkpoint_path}')
+
+        if self.is_best(metric_val):
+            # Save the best model
+            self.best_val = metric_val
+            best_path = os.path.join(self.save_dir, 'best.pth.tar')
+            shutil.copy(checkpoint_path, best_path)
+            self._print(f'New best checkpoint at step {step}...')
+
+        # Add checkpoint path to priority queue (lowest priority removed first)
+        if self.maximize_metric:
+            priority_order = metric_val
+        else:
+            priority_order = -metric_val
+
+        self.ckpt_paths.put((priority_order, checkpoint_path))
+
+        # Remove a checkpoint if more than max_checkpoints have been saved
+        if self.ckpt_paths.qsize() > self.max_checkpoints:
+            _, worst_ckpt = self.ckpt_paths.get()
+            try:
+                os.remove(worst_ckpt)
+                self._print(f'Removed checkpoint: {worst_ckpt}')
+            except OSError:
+                # Avoid crashing if checkpoint has been removed or protected
+                pass
+
+# Credit to Chris Chute (chute@stanford.edu)
+# (https://github.com/minggg/squad/blob/master/util.py)
+class AverageMeter:
+    """Keep track of average values over time.
+
+    Adapted from:
+        > https://github.com/pytorch/examples/blob/master/imagenet/main.py
+    """
+    def __init__(self):
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def reset(self):
+        """Reset meter."""
+        self.__init__()
+
+    def update(self, val, num_samples=1):
+        """Update meter with new value `val`, the average of `num` samples.
+
+        Args:
+            val (float): Average value to update the meter with.
+            num_samples (int): Number of samples that were averaged to
+                produce `val`.
+        """
+        self.count += num_samples
+        self.sum += val * num_samples
+        self.avg = self.sum / self.count
