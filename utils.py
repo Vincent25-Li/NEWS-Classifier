@@ -136,10 +136,13 @@ def compute_f1(pred_dict):
     
     f1_counter = Counter()
     for key in label_counter.keys():
-        precision = 0 if pred_counter[key] == 0 else correct_counter[key] / pred_counter[key]
-        recall = correct_counter[key] / pred_counter[key]
+        if correct_counter[key] == 0:
+            f1_counter[key] = 0
+            continue
+        precision = correct_counter[key] / pred_counter[key]
+        recall = correct_counter[key] / label_counter[key]
         f1_counter[key] = (2 * precision * recall) / (precision + recall)
-    f1 = sum(f1_counter.values()) / len(f1_counter)
+    f1 = sum(f1_counter.values()) / len(f1_counter) * 100.
 
     return f1
 

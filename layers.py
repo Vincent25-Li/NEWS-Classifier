@@ -9,13 +9,12 @@ class DistilBERTClassifier(nn.Module):
     """Classification layer on top of the DistilBERT model
     
     """
-    def __init__(self, hidden_size, num_labels, drop_prob, **kwargs):
+    def __init__(self, hidden_size, num_labels, drop_prob, use_img, img_size):
         super(DistilBERTClassifier, self).__init__()
         self.drop_prob = drop_prob
         self.linear_1 = nn.Linear(hidden_size, num_labels)
-        self.use_img = kwargs.pop('use_img', False)
-        if self.use_img:
-            img_size = kwargs.pop('img_size', 512)
+        self.use_img = use_img
+        if use_img:
             self.linear_2 = nn.Linear(img_size, num_labels)
         
     def forward(self, con_x, img_x):

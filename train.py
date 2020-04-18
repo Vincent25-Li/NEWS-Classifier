@@ -39,7 +39,9 @@ def main(args):
     # Get model
     log.info('Building model...')
     config = DistilBertConfig()
-    model = DistilBERT(config, args.num_labels, args.use_img)
+    model = DistilBERT(config, args.num_labels,
+                       use_img=args.use_img,
+                       img_size=args.img_size)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
@@ -98,8 +100,8 @@ def main(args):
                 optimizer.zero_grad()
 
                 # Forward
-                log = model(input_idxs, atten_masks, images)
-                loss = F.nll_loss(log, y)
+                log_p = model(input_idxs, atten_masks, images)
+                loss = F.nll_loss(log_p, y)
                 loss_val = loss.item()
 
                 # Backward
@@ -158,6 +160,10 @@ def evaluate(model, data_loader, device):
                                                 log.exp().tolist(),
                                                 y.tolist())
                 pred_dict.update(preds)
+
+                # Log info
+                progress_bar.update(batch_size)
+                progress_bar.set_postfix(NLL=nll_meter.avg)
     
     model.train()
 
