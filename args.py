@@ -70,10 +70,14 @@ def get_train_args():
                         type=int,
                         default=2000,
                         help='Number of steps between successive evaluations.')
-    parser.add_argument('--lr',
+    parser.add_argument('--lr_1',
+                        type=float,
+                        default=2e-3,
+                        help='Learning rate for classifier layer.')
+    parser.add_argument('--lr_2',
                         type=float,
                         default=2e-5,
-                        help='Learning rate.')
+                        help='Fine tuned learning rate.')
     parser.add_argument('--l2_wd',
                         type=float,
                         default=0,
@@ -82,12 +86,20 @@ def get_train_args():
                         type=int,
                         default=5,
                         help='Number of epochs for which to train. Negative means forever.')
+    parser.add_argument('--drop_prob',
+                        type=float,
+                        default=0.1,
+                        help='Probability of zeroing an activation in dropout layers.')
     parser.add_argument('--num_labels',
                         type=int,
                         default=8,
                         help='Number of labels for classification.')
+    parser.add_argument('--freeze',
+                        type=lambda s: s.lower().startswith('t'),
+                        default=False,
+                        help='Whether to freeze the pretrained BERT model')
     parser.add_argument('--use_img',
-                        type=lambda s: s.lower().startwith('t'),
+                        type=lambda s: s.lower().startswith('t'),
                         default=True,
                         help='Whether to use images for prediction')
     parser.add_argument('--img_size',
@@ -119,6 +131,11 @@ def get_train_args():
 
 def add_common_args(parser):
     """Add arguments common to scripts: setup.py, train.py, test.py"""
+    parser.add_argument('--name',
+                        '-n',
+                        type=str,
+                        required=True,
+                        help='Name to identify training or test run.')
     parser.add_argument('--raw_data_file',
                         type=str,
                         default='./data/train_raw.npz',
@@ -143,11 +160,6 @@ def add_common_args(parser):
 
 def add_train_test_args(parser):
     """Add arguments common to train.py and test.py"""
-    parser.add_argument('--name',
-                        '-n',
-                        type=str,
-                        required=True,
-                        help='Name to identify training or test run.')
     parser.add_argument('--save_dir',
                         type=str,
                         default='./save/',
@@ -161,6 +173,10 @@ def add_train_test_args(parser):
                         default=64,
                         help='Batch size per GPU. Scales automatically when \
                               multiple GPUs are available.')
+    parser.add_argument('--hidden_size',
+                        type=int,
+                        default=768,
+                        help='Number of features in encoder hidden layers.')
     parser.add_argument('--num_workers',
                         type=int,
                         default=4,

@@ -5,7 +5,7 @@ import ujson as json
 
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-from transformers import DistilBertTokenizer
+from transformers import DistilBertTokenizer, BertTokenizer
 from args import get_setup_args
 
 def save(filename, obj, message=None):
@@ -54,13 +54,14 @@ def build_features(args, data, y, tokenizer, out_file, data_type):
              img_paths=img_paths,
              ids=ids.astype(int),
              y=np.array(y))
+
 def pre_process(args):
     # Load data
     data = np.load(args.raw_data_file, allow_pickle=True)[args.times]
     
     # Convert categories to target y idxs
     categories = data[:, 4]
-    cat2idx = {cat: idx for idx, cat in enumerate(set(categories))}
+    cat2idx = {cat: idx for idx, cat in enumerate(sorted(set(categories)))}
     y = [cat2idx[category] for category in categories]
 
     # Split data into train, dev, test set
@@ -76,13 +77,21 @@ def pre_process(args):
                                                           stratify=y_dev)
 
     # Load tokenizer
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-multilingual-cased')
+    tokenizer = get_tokenizer(args.name)
 
     build_features(args, data_train, y_train, tokenizer, args.train_record_file, 'train')
     build_features(args, data_dev, y_dev, tokenizer, args.dev_record_file, 'dev')
     build_features(args, data_test, y_test, tokenizer, args.test_record_file, 'test')
 
     save(args.cat2idx_file, cat2idx, 'category to index dictionary')
+
+def get_tokenizer(name):
+    if name == 'DistilBERT':
+        tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-multilingual-cased')
+    elif name == 'ALBERT':
+        tokenizer = BertTokenizer.from_pretrained("voidful/albert_chinese_base")
+    
+    return tokenizer
 
 if __name__ == '__main__':
     pre_process(get_setup_args())

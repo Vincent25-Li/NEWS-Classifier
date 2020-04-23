@@ -15,7 +15,7 @@ from json import dumps
 from ujson import load as json_load
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
-from models import DistilBERT
+from models import DistilBERT, ALBERT
 from transformers import DistilBertConfig
 from utils import NEWS, collate_fn
 from args import get_train_args
@@ -38,10 +38,7 @@ def main(args):
 
     # Get model
     log.info('Building model...')
-    config = DistilBertConfig()
-    model = DistilBERT(config, args.num_labels,
-                       use_img=args.use_img,
-                       img_size=args.img_size)
+    model = get_model(args)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
@@ -59,7 +56,11 @@ def main(args):
                                  log=log)
     
     # Set optimizer and scheduler
-    optimizer = optim.AdamW(model.parameters(), args.lr,
+    optimizer_grouped_params = [
+        {'params': [p for n, p in model.named_parameters() if 'classifier' not in n]},
+        {'params': [p for n, p in model.named_parameters() if 'classifier' in n], 'lr': args.lr_1}
+    ]
+    optimizer = optim.AdamW(optimizer_grouped_params, args.lr_2,
                             weight_decay=args.l2_wd)
     scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
 
@@ -123,7 +124,7 @@ def main(args):
 
                     # Evaluate and save checkpoint
                     log.info(f'Evaluating at step {step}...')
-                    results = evaluate(model, dev_loader, device)
+                    results, _ = evaluate(model, dev_loader, device)
                     saver.save(step, model, results[args.metric_name], device)
 
                     # Log to console
@@ -171,7 +172,23 @@ def evaluate(model, data_loader, device):
     results = {'NLL': nll_meter.avg,
                'F1': F1}
 
-    return results
+    return results, pred_dict
+
+def get_model(args):
+    if args.name == 'DistilBERT':
+        model = DistilBERT(args.hidden_size, args.num_labels,
+                           drop_prob=args.drop_prob,
+                           freeze=args.freeze,
+                           use_img=args.use_img,
+                           img_size=args.img_size)
+    elif args.name == 'ALBERT':
+        model = ALBERT(args.hidden_size, args.num_labels,
+                       drop_prob=args.drop_prob,
+                       freeze=args.freeze,
+                       use_img=args.use_img,
+                       img_size=args.img_size)
+    
+    return model
 
 if __name__ == '__main__':
     main(get_train_args())
